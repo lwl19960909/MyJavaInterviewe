@@ -985,15 +985,21 @@ G1：初始标记，并发标记，最终标记，筛选回收（根据时间进
 * 运行：可运行状态的线程获得了CPU时间片，执行程序代码
 * 阻塞：阻塞状态是指线程因为某种原因放弃CPU使用权，也让出了CPU的时间片，暂时停止运行。直到线程进入可运行状态，才有机会再次获得CPU权限转到运行态的机会。
 
-start方法是启动线程，使线程的状态更改为可运行状态
+start方法是启动线程
 run方法是线程所要执行的业务逻辑、
-wait方法是阻塞当前线程，但是不释放CPU资源
-notify方法唤醒某一个线程，使其从阻塞状态变为可运行态
-sleep方法，阻塞当前线程，并且释放CPU资源
-join方法把指定线程加入到当前线程中
+wait方法是阻塞当前线程，并释放同步锁
+notify方法唤醒此监视器对象上的一个线程，使其从阻塞状态变为可运行态
+sleep方法，阻塞当前线程，不释放同步锁
+yiled停止当前线程，让同等优先级的线程先执行。
+join方法把指定线程加入到当前线程中，并且等到该线程执行完毕，在执行当前线程。（比如B线程调用了A线程的join方法，那么就等A线程执行完毕再执行B线程）
 
 
 ## 3、wait,notify阻塞唤醒确切过程？在哪阻塞，在哪唤醒？为什么要出现在同步代码块中，为什么要处于while循环中？ 
+wait方法，必须由持有当前监视器对象的锁的线程执行，调用释放线程所持有的所有当前监视器对象的锁。并等待唤醒。
+notify方法，随机唤醒一个当前监视器对象上的等待线程，唤醒的线程并不会立即执行，而是等到当前线程释放锁之后和其他的线程一起竞争这个锁。
+wait和notify方法都要要求调用的线程持有当前监视器对象的锁，所以都需要在同步代码块中执行。
+由于存在虚假唤醒的情况，所以wait最好放在一个条件为not hold the monitor的while循环里避免这种情况的发生。
+线程也可以在不被notify、中断或超时的情况下唤醒，即所谓的虚假唤醒。
 
 ## 4、线程中断，守护线程 
 
@@ -1014,26 +1020,222 @@ join方法把指定线程加入到当前线程中
 ## 12、AQS思想，以及基于AQS实现的lock, CountDownLatch、CyclicBarrier、Semaphore介绍 
 
 ## 13、线程池构造函数7大参数，线程处理任务过程，线程拒绝策略 
+常驻线程数
+最大线程数
+无任务等待时间
+时间单位
+任务队列
+线程工厂
+拒绝策略
+
+线程池处理任务的过程，首先看常驻线程是否空闲，如果空闲安排给常驻线程
+常驻线程都在工作就把任务放进任务队列里
+任务队列满了之后，再来任务对比目前线程数和最大线程数，小于最大线程数就增开线程
+等于最大线程数就执行拒绝策略。
+
+拒绝策略一共四种：
+* 丢弃任务并抛出异常（AbortPolicy）
+* 丢弃不抛出异常(DiscardPolicy)
+* 丢弃阻塞队列首部任务(DiscardOldestPolicy)
+* 交给调用的线程执行(CallerRunsPolicy)
 
 ## 14、Execuors类实现的几种线程池类型，阿里为啥不让用？ 
+CachedThreadPool
+FixedThreadPool
+SingleThreadPool
+ScheduledThreadPool
 
+其中Fixed和Single由于阻塞队列是LinkedBlockingQueue理论上可以无限制添加任务导致OOM。
+而Cached和Scheduled的最大线程数是Integer.MAX_VALUE可能会创建大量线程导致OOM
 ## 15、线程池大小如何设置？ 
 
 ## 16、手写简单的线程池，体现线程复用 
+```java
+import java.util.concurrent.*;
+
+public class ThreadPoolTest {
+    static CountDownLatch flag = new CountDownLatch(10);
+    public static void main(String[] args) {
+        ThreadPoolExecutor pool = new ThreadPoolExecutor(3,5,1, TimeUnit.SECONDS, new ArrayBlockingQueue<Runnable>(10));
+
+        for (int i = 0; i < 5; i++) {
+           pool.execute(new MyTsk());
+        }
+        try {
+            Thread.currentThread().sleep(1000);
+        }catch (Exception e){
+
+        }
+        for (int i = 0; i < 9; i++) {
+            pool.execute(new MyTsk());
+        }
+        pool.shutdown();
+
+    }
+}
+
+class MyTsk implements Runnable{
+
+    @Override
+    public void run() {
+        try {
+            System.out.println(Thread.currentThread().getName()+"is working");
+            Thread.currentThread().sleep(500);
+            System.out.println(Thread.currentThread().getName()+"end work");
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+    }
+}
+
+```
 
 ## 17、手写消费者生产者模式 
+```java
+import java.util.concurrent.ArrayBlockingQueue;
+
+public class MyBlokqueue {
+    public static void main(String[] args) {
+        int capacity = 5;
+        ArrayBlockingQueue<Integer> queue = new ArrayBlockingQueue<Integer>(5);
+        Producer producer1 = new Producer( queue,capacity,"producer1");
+        Producer producer2 = new Producer( queue,capacity,"producer2");
+
+        Consumer consumer1 = new Consumer(queue,capacity,"consumer1");
+        Consumer consumer2 = new Consumer(queue,capacity,"consumer2");
+        Consumer consumer3 = new Consumer(queue,capacity,"consumer3");
+
+        new Thread(producer1).start();
+        new Thread(producer2).start();
+        new Thread(consumer1).start();
+        new Thread(consumer2).start();
+        new Thread(consumer3).start();
+
+    }
+}
+
+class Producer implements Runnable{
+    private ArrayBlockingQueue queue;
+    private int size;
+    private String name;
+
+    public Producer(ArrayBlockingQueue queue, int size, String name) {
+        this.queue = queue;
+        this.size = size;
+        this.name = name;
+    }
+
+    @Override
+    public void run(){
+        int i=0;
+        while (true){
+            try {
+                queue.put(i);
+                System.out.println(name+"has produced "+(i++));
+                Thread.currentThread().sleep(500);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+}
+
+class Consumer implements Runnable{
+    private ArrayBlockingQueue queue;
+    private int size;
+    private String name;
+
+    public Consumer(ArrayBlockingQueue queue, int size, String name) {
+        this.queue = queue;
+        this.size = size;
+        this.name = name;
+    }
+
+    @Override
+    public void run() {
+        while (true){
+            try {
+                int i = (int)queue.take();
+                System.out.println("consumer"+name+" is consuming "+i);
+            }catch (Exception e){
+
+            }
+        }
+    }
+}
+
+```
 
 ## 18、手写阻塞队列 
 
 ## 19、手写多线程交替打印ABC 
+```java
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
+
+public class LockNotify {
+    static ReentrantLock lock = new ReentrantLock();
+    static Condition []conditions = new Condition[]{lock.newCondition(),lock.newCondition(),lock.newCondition()};
+    static String []out = new String[]{"A","B","C"};
+    static volatile int currentFlag = 0;
+
+    public static void print(int flag) throws InterruptedException {
+        while(true){
+            try {
+                lock.lock();
+                while (currentFlag != flag) {
+                    conditions[flag].await();
+                }
+                System.out.println(Thread.currentThread().getName() + out[flag]);
+                currentFlag = (currentFlag + 1) % 3;
+                conditions[currentFlag].signal();
+            }catch (Exception e){
+                e.printStackTrace();
+            }finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    public static void main(String[] args) {
+        for (int i = 0; i < 3 ; i++) {
+            int finalI = i;
+            new Thread(()->{
+                try {
+                    print(finalI);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            },"Thread"+i).start();
+        }
+    }
+}
+
+```
 
 ## **MySQL** 
 
 ## 1、事务4大特性，一致性具体指什么？这4个特性mysql如何保证实现的？ 
+ACID:
+原子性：事务是一个整体是不可分割的，要么全部执行，要么全部不执行。
+一致性：事务的执行结果必须从一个一致性状态转移到另一个一致性状态
+隔离性：事务对其他事务是不可见的
+持久性：事务一旦被提交所做的修改就是永久的
+
+所谓一致性是指系统从一个正确的状态,迁移到另一个正确的状态.什么叫正确的状态呢?就是当前的状态满足预定的约束就叫做正确的状态。
 
 ## 2、事务隔离级别，4个隔离级别分别有什么并发问题？ 
+脏读：A读取B已修改但未提交的数据，若B发生回滚，A再次读取前后数据不一致。
+不可重复读：A读取数据x,B修改x并提交，A再次读取x，前后数据不一致
+幻读：A统计x字段的行数，B插入一条新的数据，A再次统计x行数，前后不一致
+
+READ_UNCOMMITTED：读未提交，脏读，不可重复读，幻读
+READ_COMMITTED：读已提交，不可重复读，幻读
+REPEATABLE_READ：可重复读，幻读
+SERIALIZABLE：串行化
 
 ## 3、Mysql默认隔离级别？如何保证并发安全？ 
+Innodb默认隔离级别是RR。
 
 ## 4、RR和RC如何实现的？RR使用场景？对比volatile可见性，为什么RR的事务要设计成不能读另一个事务已经提交的数据？
 
@@ -1044,6 +1246,7 @@ join方法把指定线程加入到当前线程中
 ## 7、 介绍Inodb锁机制，行锁，表锁，意向锁 
 
 ## 8、介绍MVCC. 
+InnoDB的MVCC，是通过在每行后面加两个隐藏列来实现的（分别保存行的创建时间和过期时间），当然里面存的并不是真正意义的时间，而是系统版本号。每开始一个新的事务，系统版本号都会递增，事务开始时间的版本号会作为当前事务的版本号。
 
 ## 9、哈希索引是如何实现的？ 
 
